@@ -93,12 +93,14 @@ func marshalArgs(ctx context.Context, data any) ([]string, error) {
 	case reflect.Struct:
 		return marshalStructFields(ctx, reflected)
 	case reflect.Ptr:
-		if reflected.Elem().Kind() == reflect.Struct {
-			return marshalStructFields(ctx, reflected)
+		// not that its expected, but we could see **commStruct, so unwrap and
+		// marshal again on that value.
+		if reflected.Elem().CanInterface() {
+			return marshalArgs(ctx, reflected.Elem().Interface())
 		}
 	}
 
-	return nil, errors.New("none")
+	return nil, errors.New("unsupported type(s)")
 }
 
 // marshalStructFields marshals the fields of a struct into args. The field's

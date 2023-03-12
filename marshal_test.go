@@ -137,7 +137,6 @@ func TestMarshalArgs_trivialTypes(t *testing.T) {
 			},
 			assertErr: assert.NoError,
 		},
-
 		"nested": {
 			data: struct {
 				Foo struct {
@@ -155,6 +154,19 @@ func TestMarshalArgs_trivialTypes(t *testing.T) {
 			expected: []string{
 				"--config", "true",
 			},
+			assertErr: assert.NoError,
+		},
+		"embed": {
+			data: struct {
+				ArgsMarshalerFunc
+				IgnoredField string
+			}{
+				ArgsMarshalerFunc: func(ctx context.Context) ([]string, error) {
+					return []string{"called"}, nil
+				},
+				IgnoredField: "ignored because embedded MarshalArgs called^^",
+			},
+			expected: []string{"called"},
 			assertErr: assert.NoError,
 		},
 	}
