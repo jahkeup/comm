@@ -100,15 +100,15 @@ func marshalStructFields(ctx context.Context, value reflect.Value) ([]string, er
 	}
 
 	structType := value.Type()
+	numFields := value.NumField()
 
 	var marshaledArgs []string
-	numFields := value.NumField()
 	for i := 0; i < numFields; i++ {
 		if value.Field(i).CanInterface() {
 			structField := structType.Field(i)
 			tagSpec := structField.Tag.Get(structTagName(ctx))
 
-			fieldArgs, err := marshalSpec(ctx, tagSpec, value.Field(i).Interface())
+			fieldArgs, err := marshalSpec(ctx, tagSpec, value.Field(i))
 			if err != nil {
 				return nil, newMarshalArgFieldError(structField, err)
 			}
@@ -121,18 +121,115 @@ func marshalStructFields(ctx context.Context, value reflect.Value) ([]string, er
 }
 
 func newMarshalArgFieldError(structField reflect.StructField, err error) error {
-	panic("unimplemented")
+	return MarshalStructFieldError{
+		FieldName: structField.Name,
+		FieldNum:  structField.Type.NumField(),
+		Err:       err,
+	}
 }
 
-func marshalSpec(ctx context.Context, spec string, data any) ([]string, error) {
-	// comm:"-[,...]"
-	if strings.HasPrefix(spec, "-") {
+func marshalSpec(ctx context.Context, specString string, value reflect.Value) ([]string, error) {
+	spec, err := parseSpec(specString)
+	if err != nil {
+		return nil, err
+	}
+
+	return spec.Marshal(ctx, value.Interface())
+}
+
+func parseSpec(spec string) (*fieldSpec, error) {
+	if spec == "" {
+		return &fieldSpec{OmitField: false}, nil
+	}
+	if spec == "-" || strings.HasPrefix(spec, "-,") {
+		return &fieldSpec{OmitField: true}, nil
+	}
+
+	specElements := strings.Split(spec, ",")
+	if len(specElements) == 0 {
+		return &fieldSpec{}, nil
+	}
+
+	first := specElements[0]
+	if strings.HasPrefix(first, "-") {
+		if strings.HasSuffix(first, "=") {
+			return &fieldSpec{
+				// Writing "-flag=" or "--flag=" will merge into a single argc
+				// value.
+				//
+				// "--flag=value0 value1 value2"
+				//
+				// "-flag=value0 value1 value2"
+				SingleArgc: P(first),
+			}, nil
+		} else {
+			// Writing "-flag" or "--flag" will prepend these as arguments in
+			// the final list.
+			return &fieldSpec{
+				Prepend: []string{first},
+			}, nil
+		}
+	}
+
+	return &fieldSpec{}, nil
+}
+
+type fieldSpec struct {
+	OmitField  bool
+	SingleArgc *string
+	Prepend    []string
+	Append     []string
+	Separator  *string
+}
+
+func (spec fieldSpec) Marshal(ctx context.Context, data any) ([]string, error) {
+	if spec.OmitField {
 		return nil, nil
 	}
 
-	return marshalArgs(ctx, data)
+	dataArgs, err := marshalArgs(ctx, data)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(dataArgs) == 0 {
+		return nil, nil
+	}
+
+	if spec.Separator != nil {
+		joined := strings.Join(dataArgs, F(spec.Separator))
+		dataArgs = []string{joined}
+	}
+
+	if spec.SingleArgc != nil {
+		if len(dataArgs) == 1 {
+			dataArgs = []string{F(spec.SingleArgc) + dataArgs[0]}
+		} else {
+			joined := strings.Join(dataArgs, " ")
+			dataArgs = []string{F(spec.SingleArgc) + joined}
+		}
+	}
+
+	args := append(spec.Prepend, dataArgs...)
+	args = append(args, spec.Append...)
+
+	return args, nil
 }
 
 func structTagName(context.Context) string {
 	return "comm"
+}
+
+type MarshalStructFieldError struct {
+	FieldName string
+	FieldNum  int
+	Err       error
+}
+
+func (e MarshalStructFieldError) Error() string {
+	return fmt.Sprintf("field %q error: %v", e.FieldName, e.Err)
+}
+
+func (e MarshalStructFieldError) Unwrap() error {
+	return e.Err
 }
