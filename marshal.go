@@ -13,6 +13,12 @@ import (
 // ArgsMarshaler provides an implementation to marshal objects into their
 // respective set of command line arguments.
 type ArgsMarshaler interface {
+	// MarshalArgs is called with a context that is expected to be bounded -
+	// whether to the process lifetime or something else entirely. This allows
+	// callers to (in theory) use the context cancellation signal to convey
+	// _resource cleanup_ signaling. For example, buildings args for a temporary
+	// directory may be opaque in the arguments provided and automatically
+	// cleaned up when the context is cancelled.
 	MarshalArgs(ctx context.Context) ([]string, error)
 }
 
@@ -22,6 +28,10 @@ func MarshalArgs(ctx context.Context, data any) ([]string, error) {
 	return marshalArgs(ctx, data)
 }
 
+// ArgsMarshalerFunc is a type wrapper for a function that produces and handles
+// context cancellation (as in ArgsMarshaler) which may be used independently of
+// a method func. For example, one can use this to embed common behavior or
+// closure bound handling in a struct (`type Foo struct { ArgsMarshalerFunc }`).
 type ArgsMarshalerFunc func(context.Context) ([]string, error)
 
 // MarshalArgs implements ArgsMarshaler
