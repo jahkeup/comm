@@ -163,8 +163,9 @@ func parseSpec(spec string) (*fieldSpec, error) {
 		return &fieldSpec{}, nil
 	}
 
-	parsed := &fieldSpec{}
-
+	parsed := &fieldSpec{
+		OmitEmpty: true,
+	}
 	first := specElements[0]
 
 	if strings.HasPrefix(first, "-") {
@@ -187,11 +188,8 @@ func parseSpec(spec string) (*fieldSpec, error) {
 			switch kvparts[0] {
 			case "omitempty":
 				parsed.OmitEmpty = true
-
-				// TODO: the below.
-				//
-				// case "join":
-				// 	parsed.Separator = P(",")
+			case "join":
+				parsed.Separator = P(",")
 			}
 		} else {
 			k, v := kvparts[0], kvparts[1]
@@ -200,6 +198,8 @@ func parseSpec(spec string) (*fieldSpec, error) {
 				parsed.Bool.True = P(v)
 			case "false":
 				parsed.Bool.False = P(v)
+			case "join":
+				parsed.Separator = P(v)
 			}
 		}
 	}
@@ -223,35 +223,16 @@ type fieldSpec struct {
 }
 
 func (spec fieldSpec) Marshal(ctx context.Context, data any) ([]string, error) {
+
+	return spec.marshalArgs(ctx, data)
+}
+
+func (spec *fieldSpec) marshalArgs(ctx context.Context, data any) ([]string, error) {
+	// apply: -
 	if spec.OmitField {
 		return nil, nil
 	}
 
-	dataArgs, err := spec.marshalArgs(ctx, data)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(dataArgs) == 0 {
-		return nil, nil
-	}
-
-	if spec.SingleArgc != nil {
-		if len(dataArgs) == 1 {
-			dataArgs = []string{F(spec.SingleArgc) + dataArgs[0]}
-		} else {
-			joined := strings.Join(dataArgs, " ")
-			dataArgs = []string{F(spec.SingleArgc) + joined}
-		}
-	}
-
-	args := append(spec.Prepend, dataArgs...)
-	args = append(args, spec.Append...)
-
-	return args, nil
-}
-
-func (spec *fieldSpec) marshalArgs(ctx context.Context, data any) ([]string, error) {
 	// apply: omitempty
 	if spec.OmitEmpty {
 		// Check if the type has a method to decide if the value is zero (or
@@ -284,6 +265,10 @@ func (spec *fieldSpec) marshalArgs(ctx context.Context, data any) ([]string, err
 		return nil, err
 	}
 
+	if data == nil && len(marshaledArgs) == 0 {
+		return nil, nil
+	}
+
 	if len(marshaledArgs) == 1 {
 		switch {
 		// apply: true
@@ -305,9 +290,6 @@ func (spec *fieldSpec) marshalArgs(ctx context.Context, data any) ([]string, err
 			}
 
 			return marshaledArgs, nil
-
-		default:
-			return marshaledArgs, nil
 		}
 	}
 
@@ -326,6 +308,13 @@ func (spec *fieldSpec) marshalArgs(ctx context.Context, data any) ([]string, err
 			joined := strings.Join(marshaledArgs, " ")
 			marshaledArgs = []string{F(spec.SingleArgc) + joined}
 		}
+	}
+
+	if len(spec.Prepend) != 0 {
+		marshaledArgs = append(spec.Prepend, marshaledArgs...)
+	}
+	if len(spec.Append) != 0 {
+		marshaledArgs = append(marshaledArgs, spec.Append...)
 	}
 
 	return marshaledArgs, nil

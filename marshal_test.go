@@ -98,10 +98,11 @@ func TestMarshalArgs_trivialTypes(t *testing.T) {
 		},
 		"omit field": {
 			data: struct {
-				OmittedField          string `comm:"-"`
-				OmittedFieldWithExtra string `comm:"-,foo,k=v,eee,,"`
-				OmittedFieldBool      bool   `comm:"true=--dry-run,eee"`
-				OmittedBecauseEmpty   string `comm:"--no-value=,omitempty"`
+				OmittedField             string   `comm:"-"`
+				OmittedFieldWithExtra    string   `comm:"-,foo,k=v,eee,,"`
+				OmittedFieldBool         bool     `comm:"true=--dry-run,eee"`
+				OmittedBecauseEmpty      string   `comm:"--no-value=,omitempty"`
+				OmittedBecauseEmptySlice []string `comm:"--omittedbecauseemptyslice"`
 
 				SomeBool  bool `comm:"true=--some-bool=yes"`
 				SomeField string
@@ -117,27 +118,38 @@ func TestMarshalArgs_trivialTypes(t *testing.T) {
 		},
 		"spec basic": {
 			data: struct {
-				DashDashConfig             string    `comm:"--config"`
-				DashConfig                 string    `comm:"-config"`
-				DashConfigSingle           string    `comm:"-config="`
-				DashDashConfigSingle       string    `comm:"--config="`
-				DashDashConfigSingleSlice  []string  `comm:"--config="`
-				DashDashConfigSingleSliceP []*string `comm:"--config="`
+				DashDashConfig string `comm:"--dashdashconfig"`
+				DashConfig     string `comm:"-dashconfig"`
+
+				DashConfigSingle     string `comm:"-dashconfig="`
+				DashDashConfigSingle string `comm:"--dashdashconfig="`
+
+				DashDashConfigSingleSlice  []string  `comm:"--dashconfigslice="`
+				DashDashConfigSingleSliceP []*string `comm:"--dashconfigslicep="`
+
+				DashDashCommaJoined []string `comm:"--dashdashcommajoined,join"`
 			}{
-				DashDashConfig:             "value1",
-				DashConfig:                 "value1",
-				DashConfigSingle:           "value1",
-				DashDashConfigSingle:       "value1",
+				DashDashConfig: "value1",
+				DashConfig:     "value1",
+
+				DashConfigSingle:     "value1",
+				DashDashConfigSingle: "value1",
+
 				DashDashConfigSingleSlice:  []string{"value1", "value2", "value3"},
 				DashDashConfigSingleSliceP: PS([]string{"value1", "value2", "value3"}),
+
+				DashDashCommaJoined: []string{"value1", "value2", "value3"},
 			},
 			expected: []string{
-				"--config", "value1",
-				"-config", "value1",
-				"-config=value1",
-				"--config=value1",
-				"--config=value1 value2 value3",
-				"--config=value1 value2 value3",
+				"--dashdashconfig", "value1",
+				"-dashconfig", "value1",
+
+				"-dashconfig=value1",
+				"--dashdashconfig=value1",
+
+				"--dashconfigslice=value1 value2 value3",
+				"--dashconfigslicep=value1 value2 value3",
+				"--dashdashcommajoined", "value1,value2,value3",
 			},
 			assertErr: assert.NoError,
 		},
@@ -146,6 +158,7 @@ func TestMarshalArgs_trivialTypes(t *testing.T) {
 				Foo struct {
 					NestedThing bool `comm:"--config"`
 				}
+				// should be omitted because its nil
 				TopLevelTrailer *string `comm:"--trailer"`
 			}{
 				Foo: struct {
