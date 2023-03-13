@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -149,8 +148,6 @@ func marshalSpec(ctx context.Context, specString string, value reflect.Value) ([
 
 	return spec.Marshal(ctx, value.Interface())
 }
-
-var separatorRegex = regexp.MustCompile(",[^,]")
 
 func parseSpec(spec string) (*fieldSpec, error) {
 	if spec == "" {
