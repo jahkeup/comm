@@ -100,15 +100,19 @@ func TestMarshalArgs_trivialTypes(t *testing.T) {
 			data: struct {
 				OmittedField          string `comm:"-"`
 				OmittedFieldWithExtra string `comm:"-,foo,k=v,eee,,"`
+				OmittedFieldBool      bool   `comm:"true=--dry-run,eee"`
+				OmittedBecauseEmpty   string `comm:"--no-value=,omitempty"`
 
+				SomeBool  bool `comm:"true=--some-bool=yes"`
 				SomeField string
 			}{
 				OmittedField:          "omitted",
 				OmittedFieldWithExtra: "also omitted",
 
+				SomeBool:  true,
 				SomeField: "some field",
 			},
-			expected:  []string{"some field"},
+			expected:  []string{"--some-bool=yes", "some field"},
 			assertErr: assert.NoError,
 		},
 		"spec basic": {
@@ -166,7 +170,7 @@ func TestMarshalArgs_trivialTypes(t *testing.T) {
 				},
 				IgnoredField: "ignored because embedded MarshalArgs called^^",
 			},
-			expected: []string{"called"},
+			expected:  []string{"called"},
 			assertErr: assert.NoError,
 		},
 	}

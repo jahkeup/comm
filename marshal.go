@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -135,7 +136,7 @@ func marshalStructFields(ctx context.Context, value reflect.Value) ([]string, er
 func newMarshalArgFieldError(structField reflect.StructField, err error) error {
 	return MarshalStructFieldError{
 		FieldName: structField.Name,
-		FieldNum:  structField.Type.NumField(),
+		FieldNum:  structField.Index[0],
 		Err:       err,
 	}
 }
@@ -149,6 +150,8 @@ func marshalSpec(ctx context.Context, specString string, value reflect.Value) ([
 	return spec.Marshal(ctx, value.Interface())
 }
 
+var separatorRegex = regexp.MustCompile(",[^,]")
+
 func parseSpec(spec string) (*fieldSpec, error) {
 	if spec == "" {
 		return &fieldSpec{OmitField: false}, nil
@@ -157,41 +160,69 @@ func parseSpec(spec string) (*fieldSpec, error) {
 		return &fieldSpec{OmitField: true}, nil
 	}
 
+	// TODO: reader w/ splits matching on ",[^,]"
 	specElements := strings.Split(spec, ",")
 	if len(specElements) == 0 {
 		return &fieldSpec{}, nil
 	}
 
+	parsed := &fieldSpec{}
+
 	first := specElements[0]
+
 	if strings.HasPrefix(first, "-") {
 		if strings.HasSuffix(first, "=") {
-			return &fieldSpec{
-				// Writing "-flag=" or "--flag=" will merge into a single argc
-				// value.
-				//
-				// "--flag=value0 value1 value2"
-				//
-				// "-flag=value0 value1 value2"
-				SingleArgc: P(first),
-			}, nil
+			// Writing "-flag=" or "--flag=" will merge into a single argc
+			// value.
+			//
+			// "--flag=value0 value1 value2"
+			//
+			// "-flag=value0 value1 value2"
+			parsed.SingleArgc = P(first)
 		} else {
-			// Writing "-flag" or "--flag" will prepend these as arguments in
-			// the final list.
-			return &fieldSpec{
-				Prepend: []string{first},
-			}, nil
+			parsed.Prepend = append(parsed.Prepend, first)
 		}
 	}
 
-	return &fieldSpec{}, nil
+	for i := 0; i < len(specElements); i++ {
+		kvparts := strings.SplitN(specElements[i], "=", 2)
+		if len(kvparts) == 1 {
+			switch kvparts[0] {
+			case "omitempty":
+				parsed.OmitEmpty = true
+
+				// TODO: the below.
+				//
+				// case "join":
+				// 	parsed.Separator = P(",")
+			}
+		} else {
+			k, v := kvparts[0], kvparts[1]
+			switch k {
+			case "true":
+				parsed.Bool.True = P(v)
+			case "false":
+				parsed.Bool.False = P(v)
+			}
+		}
+	}
+
+	return parsed, nil
 }
 
 type fieldSpec struct {
-	OmitField  bool
+	OmitField bool
+	OmitEmpty bool
+
 	SingleArgc *string
 	Prepend    []string
 	Append     []string
 	Separator  *string
+
+	Bool struct {
+		True  *string
+		False *string
+	}
 }
 
 func (spec fieldSpec) Marshal(ctx context.Context, data any) ([]string, error) {
@@ -199,18 +230,13 @@ func (spec fieldSpec) Marshal(ctx context.Context, data any) ([]string, error) {
 		return nil, nil
 	}
 
-	dataArgs, err := marshalArgs(ctx, data)
+	dataArgs, err := spec.marshalArgs(ctx, data)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(dataArgs) == 0 {
 		return nil, nil
-	}
-
-	if spec.Separator != nil {
-		joined := strings.Join(dataArgs, F(spec.Separator))
-		dataArgs = []string{joined}
 	}
 
 	if spec.SingleArgc != nil {
@@ -226,6 +252,86 @@ func (spec fieldSpec) Marshal(ctx context.Context, data any) ([]string, error) {
 	args = append(args, spec.Append...)
 
 	return args, nil
+}
+
+func (spec *fieldSpec) marshalArgs(ctx context.Context, data any) ([]string, error) {
+	// apply: omitempty
+	if spec.OmitEmpty {
+		// Check if the type has a method to decide if the value is zero (or
+		// empty) rather than general reflection.
+		switch v := data.(type) {
+		case interface{ IsEmpty() bool }:
+			if v.IsEmpty() {
+				return nil, nil
+			}
+			// not empty, carry on
+
+		case interface{ IsZero() bool }:
+			if v.IsZero() {
+				return nil, nil
+			}
+			// not a zero value, carry on
+		}
+
+		// fallback to reflection of the type's zero value.
+		dataValue := reflect.ValueOf(data)
+		if dataValue.IsZero() {
+			return nil, nil
+		} else {
+			// not a zero value, carry on
+		}
+	}
+
+	marshaledArgs, err := marshalArgs(ctx, data)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(marshaledArgs) == 1 {
+		switch {
+		// apply: true
+		case marshaledArgs[0] == "true" &&
+			F(spec.Bool.True) != "":
+
+			return []string{F(spec.Bool.True)}, nil
+
+		// apply: false
+		case marshaledArgs[0] == "false":
+			// we have a value, use it instead
+			if F(spec.Bool.False) != "" {
+				return []string{F(spec.Bool.False)}, nil
+			}
+
+			// omit if there's a "true" value but no false one.
+			if F(spec.Bool.True) != "" {
+				return nil, nil
+			}
+
+			return marshaledArgs, nil
+
+		default:
+			return marshaledArgs, nil
+		}
+	}
+
+	// apply:
+	if spec.Separator != nil {
+		joined := strings.Join(marshaledArgs, F(spec.Separator))
+		// TODO: support escaping convenience
+		marshaledArgs = []string{joined}
+	}
+
+	// apply: --foo=, -foo=,
+	if spec.SingleArgc != nil {
+		if len(marshaledArgs) == 1 {
+			marshaledArgs = []string{F(spec.SingleArgc) + marshaledArgs[0]}
+		} else {
+			joined := strings.Join(marshaledArgs, " ")
+			marshaledArgs = []string{F(spec.SingleArgc) + joined}
+		}
+	}
+
+	return marshaledArgs, nil
 }
 
 func structTagName(context.Context) string {
